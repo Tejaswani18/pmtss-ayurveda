@@ -1,98 +1,128 @@
-import React, { useState, useContext } from 'react';
+import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Container,
-  Paper,
+  Box,
+  Typography,
   TextField,
   Button,
-  Typography,
-  Box,
   Alert,
   CircularProgress,
   Link,
+  Paper,
 } from '@mui/material';
-import { useNavigate, Link as RouterLink } from 'react-router-dom';
-import { AuthContext } from '../contexts/AuthContext';
+import { createUserWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase'; // Make sure these are correctly imported
+import { useSnackbar } from 'notistack';
 
 const Signup = () => {
-  const [formData, setFormData] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    password: '',
-    confirmPassword: '',
-  });
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const { signup } = useContext(AuthContext);
   const navigate = useNavigate();
+  const { enqueueSnackbar } = useSnackbar();
 
-  const handleChange = (e) => {
-    setFormData({ ...formData, [e.target.name]: e.target.value });
-  };
-
-  const handleSubmit = async (e) => {
+  const handleSignup = async (e) => {
     e.preventDefault();
-    const { name, email, phone, password, confirmPassword } = formData;
-
-    if (!name || !email || !phone || !password) {
-      return setError('All fields are required.');
-    }
-    if (password !== confirmPassword) {
-      return setError('Passwords do not match.');
-    }
-    if (password.length < 6) {
-      return setError('Password must be at least 6 characters long.');
-    }
-
     setError('');
+
+    if (password !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+
+    if (password.length < 6) {
+      setError("Password should be at least 6 characters");
+      return;
+    }
+
     setLoading(true);
 
     try {
-      await signup(email, password, { name, phone });
-      // After successful signup, redirect to patient dashboard or home
-      navigate('/patient');
+      // 1. Create user in Firebase Authentication
+      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+      const user = userCredential.user;
+
+      // 2. Save user profile in Firestore with UID as document ID
+      await setDoc(doc(db, "users", user.uid), {
+        uid: user.uid,
+        name: name.trim() || email.split('@')[0],
+        email: user.email,
+        phone: phone.trim() || "",
+        role: "patient",               // Critical for login redirection
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      });
+
+      // Optional: Create empty patient-specific document (recommended)
+      await setDoc(doc(db, "patients", user.uid), {
+        patientId: user.uid,
+        name: name.trim() || email.split('@')[0],
+        email: user.email,
+        phone: phone.trim() || "",
+        createdAt: new Date(),
+      });
+
+      enqueueSnackbar("Account created successfully! Please login.", {
+        variant: "success",
+        autoHideDuration: 5000,
+      });
+
+      navigate("/login");
     } catch (err) {
-      let message = 'Failed to create account. Please try again.';
-      if (err.code === 'auth/email-already-in-use') {
-        message = 'This email is already registered. Please log in instead.';
-      } else if (err.code === 'auth/weak-password') {
-        message = 'Password is too weak.';
-      } else if (err.code === 'auth/invalid-email') {
-        message = 'Invalid email address.';
+      console.error("Signup error:", err);
+
+      let errorMessage = "Failed to create account. Please try again.";
+      
+      switch (err.code) {
+        case 'auth/email-already-in-use':
+          errorMessage = "This email is already registered.";
+          break;
+        case 'auth/invalid-email':
+          errorMessage = "Invalid email format.";
+          break;
+        case 'auth/weak-password':
+          errorMessage = "Password should be at least 6 characters.";
+          break;
+        default:
+          errorMessage = err.message;
       }
-      setError(message);
+
+      setError(errorMessage);
+      enqueueSnackbar(errorMessage, { variant: "error" });
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <Container maxWidth="xs">
+    <Container component="main" maxWidth="xs">
       <Box
         sx={{
-          mt: { xs: 4, md: 6 },
-          mb: 4,
+          marginTop: 8,
           display: 'flex',
           flexDirection: 'column',
           alignItems: 'center',
         }}
       >
-        <Paper elevation={8} sx={{ p: { xs: 3, sm: 5 }, width: '100%', borderRadius: 3 }}>
-          <Typography component="h1" variant="h4" align="center" gutterBottom fontWeight="bold" color="primary">
-            Join AyurVeda
-          </Typography>
-          <Typography variant="body1" align="center" color="text.secondary" sx={{ mb: 4 }}>
-            Create your patient account
+        <Paper elevation={6} sx={{ p: 4, width: '100%', borderRadius: 2 }}>
+          <Typography component="h1" variant="h5" align="center" gutterBottom>
+            Sign Up
           </Typography>
 
           {error && (
-            <Alert severity="error" sx={{ mb: 3 }} onClose={() => setError('')}>
+            <Alert severity="error" sx={{ mb: 2 }}>
               {error}
             </Alert>
           )}
 
-          <Box component="form" onSubmit={handleSubmit} noValidate>
+          <Box component="form" onSubmit={handleSignup} sx={{ mt: 1 }}>
             <TextField
               margin="normal"
               required
@@ -102,10 +132,10 @@ const Signup = () => {
               name="name"
               autoComplete="name"
               autoFocus
-              value={formData.name}
-              onChange={handleChange}
-              disabled={loading}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
             />
+
             <TextField
               margin="normal"
               required
@@ -114,22 +144,21 @@ const Signup = () => {
               label="Email Address"
               name="email"
               autoComplete="email"
-              value={formData.email}
-              onChange={handleChange}
-              disabled={loading}
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
             />
+
             <TextField
               margin="normal"
-              required
               fullWidth
               id="phone"
               label="Phone Number"
               name="phone"
               autoComplete="tel"
-              value={formData.phone}
-              onChange={handleChange}
-              disabled={loading}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
             />
+
             <TextField
               margin="normal"
               required
@@ -139,10 +168,10 @@ const Signup = () => {
               type="password"
               id="password"
               autoComplete="new-password"
-              value={formData.password}
-              onChange={handleChange}
-              disabled={loading}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
             />
+
             <TextField
               margin="normal"
               required
@@ -151,28 +180,27 @@ const Signup = () => {
               label="Confirm Password"
               type="password"
               id="confirmPassword"
-              autoComplete="new-password"
-              value={formData.confirmPassword}
-              onChange={handleChange}
-              disabled={loading}
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
             />
 
             <Button
               type="submit"
               fullWidth
               variant="contained"
-              size="large"
-              sx={{ mt: 4, mb: 3, py: 1.6, borderRadius: 2 }}
+              sx={{ mt: 3, mb: 2, py: 1.5 }}
               disabled={loading}
             >
-              {loading ? <CircularProgress size={28} color="inherit" /> : 'Create Account'}
+              {loading ? <CircularProgress size={24} color="inherit" /> : "Sign Up"}
             </Button>
 
-            <Box textAlign="center">
-              <Link component={RouterLink} to="/login" variant="body2">
-                Already have an account? Log In
-              </Link>
-            </Box>
+            <Grid container justifyContent="flex-end">
+              <Grid item>
+                <Link href="/login" variant="body2">
+                  Already have an account? Login
+                </Link>
+              </Grid>
+            </Grid>
           </Box>
         </Paper>
       </Box>
